@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -9,6 +9,8 @@ import {
   Loader2,
   Plus,
   Sparkles,
+  Upload,
+  X,
 } from "lucide-react";
 import type {
   EditalCard,
@@ -68,6 +70,32 @@ function normalizeIncidence(raw: string): IncidenceLevel {
   return "Base";
 }
 
+interface AttachedEditalFile {
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  base64: string;
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function isSupportedEditalFile(file: File): boolean {
+  const lower = file.name.toLowerCase();
+  return (
+    lower.endsWith(".pdf") ||
+    lower.endsWith(".txt") ||
+    lower.endsWith(".docx") ||
+    file.type === "application/pdf" ||
+    file.type === "text/plain" ||
+    file.type ===
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  );
+}
+
 export const SourceOrganizerView: React.FC<SourceOrganizerViewProps> = ({
   activeTrackId,
   activeTrackTitle,
@@ -82,6 +110,9 @@ export const SourceOrganizerView: React.FC<SourceOrganizerViewProps> = ({
   const [planName, setPlanName] = useState(activeTrackTitle ?? "");
   const [editalText, setEditalText] = useState("");
   const [disciplineHint, setDisciplineHint] = useState("");
+  const [attachedFile, setAttachedFile] = useState<AttachedEditalFile | null>(null);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isOrganizing, setIsOrganizing] = useState(false);
   const [editalError, setEditalError] = useState<string | null>(null);
   const [parsedItems, setParsedItems] = useState<ParsedEditalItem[]>([]);
@@ -100,8 +131,18 @@ export const SourceOrganizerView: React.FC<SourceOrganizerViewProps> = ({
   const [generatedRev, setGeneratedRev] = useState<GeneratedRevisionResult | null>(null);
   const [revSavedNotice, setRevSavedNotice] = useState<string | null>(null);
 
-  const handleOrganizeEdital = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const runEditalExtraction = async (options?: {
+    overrideFile?: AttachedEditalFile | null;
+    overridePlanName?: string;
+  }) => {
+    const fileToSend =
+      options && "overrideFile" in options ? options.overrideFile : attachedFile;
+    const effectivePlanName =
+      options?.overridePlanName?.trim() ||
+      planName.trim() ||
+      activeTrackTitle ||
+      "Plano de Estudos";
+
     setIsOrganizing(true);
     setEditalError(null);
     setEditalImportedNotice(null);
@@ -112,8 +153,15 @@ export const SourceOrganizerView: React.FC<SourceOrganizerViewProps> = ({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           editalText,
-          examName: planName.trim() || activeTrackTitle || "Plano de Estudos",
+          examName: effectivePlanName,
           disciplineHint: disciplineHint.trim() || undefined,
+          fileData: fileToSend
+            ? {
+                base64: fileToSend.base64,
+                mimeType: fileToSend.mimeType,
+                fileName: fileToSend.fileName,
+              }
+            : undefined,
         }),
       });
       const data = await response.json();
@@ -133,6 +181,71 @@ export const SourceOrganizerView: React.FC<SourceOrganizerViewProps> = ({
     } finally {
       setIsOrganizing(false);
     }
+  };
+
+  const handleOrganizeEdital = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await runEditalExtraction();
+  };
+
+  const handleSelectedFile = (file: File | undefined | null) => {
+    if (!file) return;
+    setEditalError(null);
+    setEditalImportedNotice(null);
+
+    if (!isSupportedEditalFile(file)) {
+      setEditalError(
+        "Formato inválido. Anexe um arquivo .pdf, .txt ou .docx."
+      );
+      return;
+    }
+
+    if (file.size > 15 * 1024 * 1024) {
+      setEditalError(
+        "O arquivo excede o limite de 15 MB. Envie um PDF menor ou cole o trecho do conteúdo programático."
+      );
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      const base64 = result.includes(",") ? result.split(",")[1] : result;
+      if (!base64) {
+        setEditalError("Não foi possível ler o arquivo selecionado.");
+        return;
+      }
+
+      const fallbackMime = file.name.toLowerCase().endsWith(".pdf")
+        ? "application/pdf"
+        : file.name.toLowerCase().endsWith(".docx")
+          ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          : "text/plain";
+
+      const nextFile: AttachedEditalFile = {
+        fileName: file.name,
+        mimeType: file.type || fallbackMime,
+        sizeBytes: file.size,
+        base64,
+      };
+      setAttachedFile(nextFile);
+
+      const suggestedName = !planName.trim()
+        ? file.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ")
+        : planName;
+      if (!planName.trim()) {
+        setPlanName(suggestedName);
+      }
+
+      void runEditalExtraction({
+        overrideFile: nextFile,
+        overridePlanName: suggestedName,
+      });
+    };
+    reader.onerror = () => {
+      setEditalError("Falha ao ler o arquivo selecionado.");
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleCommitParsedToKanban = () => {
@@ -348,12 +461,101 @@ export const SourceOrganizerView: React.FC<SourceOrganizerViewProps> = ({
               </div>
             </div>
 
+            {/* Drag-and-drop / Click File Upload Area (.pdf, .txt, .docx) */}
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1.5">
+                Upload de arquivo do edital (.pdf, .txt ou .docx)
+              </label>
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.txt,.docx,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  handleSelectedFile(file);
+                  e.target.value = "";
+                }}
+                className="sr-only"
+              />
+
+              {!attachedFile ? (
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => fileInputRef.current?.click()}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      fileInputRef.current?.click();
+                    }
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDraggingFile(true);
+                  }}
+                  onDragLeave={() => setIsDraggingFile(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setIsDraggingFile(false);
+                    const file = e.dataTransfer.files?.[0];
+                    handleSelectedFile(file);
+                  }}
+                  className={`border border-dashed rounded-md px-4 py-5 text-center cursor-pointer transition-colors ${
+                    isDraggingFile
+                      ? "border-[#1E3A5F] bg-slate-100"
+                      : "border-slate-300 bg-slate-50 hover:border-[#1E3A5F] hover:bg-slate-100/70"
+                  }`}
+                >
+                  <Upload className="w-5 h-5 text-[#1E3A5F] mx-auto" />
+                  <div className="mt-2 text-xs font-semibold text-slate-800">
+                    Arraste seu edital aqui ou clique para selecionar
+                  </div>
+                  <p className="mt-0.5 text-[11px] text-slate-500">
+                    Aceita .pdf, .txt e .docx (até 15 MB) · Extração automática ao anexar
+                  </p>
+                </div>
+              ) : (
+                <div className="border border-slate-300 bg-slate-50 rounded-md px-3.5 py-3 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <FileText className="w-4 h-4 text-[#1E3A5F] shrink-0" />
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold text-slate-900 truncate">
+                        {attachedFile.fileName}
+                      </div>
+                      <div className="text-[11px] text-slate-500 font-mono tabular-nums">
+                        {formatFileSize(attachedFile.sizeBytes)} ·{" "}
+                        {isOrganizing ? "Extraindo conteúdo..." : "Anexado"}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="px-2 py-1 text-[11px] font-medium text-slate-700 bg-white border border-slate-300 rounded hover:bg-slate-100 whitespace-nowrap"
+                    >
+                      Trocar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAttachedFile(null)}
+                      title="Remover arquivo anexado"
+                      className="p-1 text-slate-500 hover:text-slate-800 rounded"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div>
               <label className="block text-xs font-medium text-slate-700 mb-1">
-                Texto do edital ou ementa
+                Ou cole o texto do edital / ementa
               </label>
               <textarea
-                rows={11}
+                rows={8}
                 value={editalText}
                 onChange={(e) => setEditalText(e.target.value)}
                 placeholder="Cole aqui o texto do edital (disciplinas, tópicos, artigos ou conteúdos programáticos)..."
@@ -428,14 +630,26 @@ export const SourceOrganizerView: React.FC<SourceOrganizerViewProps> = ({
               )}
             </div>
 
-            {parsedItems.length === 0 ? (
+            {isOrganizing && parsedItems.length === 0 ? (
+              <div className="border border-slate-200 bg-slate-50 rounded-md p-10 text-center space-y-2.5">
+                <Loader2 className="w-6 h-6 text-[#1E3A5F] mx-auto animate-spin" />
+                <div className="text-sm font-medium text-slate-800">
+                  {attachedFile
+                    ? `Extraindo conteúdo de ${attachedFile.fileName}...`
+                    : "Organizando conteúdo programático..."}
+                </div>
+                <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                  A IA está identificando matérias, tópicos, referências e etapas de estudo para montar a prévia do Kanban.
+                </p>
+              </div>
+            ) : parsedItems.length === 0 ? (
               <div className="border border-dashed border-slate-300 rounded-md p-10 text-center space-y-2">
                 <FileText className="w-6 h-6 text-slate-400 mx-auto" />
                 <div className="text-sm font-medium text-slate-700">
                   Nenhum edital processado ainda
                 </div>
                 <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                  Cole seu edital ao lado e clique em "Organizar edital em cartões Kanban" para visualizar e publicar os tópicos diretamente no quadro.
+                  Anexe um arquivo (.pdf, .txt, .docx) ou cole o texto ao lado para preencher automaticamente a prévia dos tópicos do Kanban.
                 </p>
               </div>
             ) : (

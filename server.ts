@@ -1,6 +1,7 @@
 import "dotenv/config";
 import express from "express";
 import fs from "fs";
+import mammoth from "mammoth";
 import path from "path";
 import { fileURLToPath } from "url";
 import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
@@ -55,7 +56,7 @@ function extractErrorMessage(err: unknown): { status: number; message: string } 
 
 async function startServer() {
   const app = express();
-  app.use(express.json({ limit: "2mb" }));
+  app.use(express.json({ limit: "25mb" }));
 
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true });
@@ -63,23 +64,103 @@ async function startServer() {
 
   app.post("/api/ai/organize-edital", async (req, res) => {
     try {
-      const { editalText, examName, disciplineHint } = req.body as {
+      const { editalText, examName, disciplineHint, fileData } = req.body as {
         editalText?: string;
         examName?: string;
         disciplineHint?: string;
+        fileData?: {
+          base64: string;
+          mimeType: string;
+          fileName: string;
+        };
       };
 
-      if (!editalText || editalText.trim().length < 20) {
+      const trimmedText = editalText?.trim() ?? "";
+      const hasFile = Boolean(fileData?.base64 && fileData?.fileName);
+
+      if (!hasFile && trimmedText.length < 20) {
         res.status(400).json({
-          error: "Cole o texto do conteúdo programático ou edital (mínimo de 20 caracteres).",
+          error:
+            "Cole o texto do conteúdo programático (mínimo 20 caracteres) ou anexe um arquivo .pdf, .txt ou .docx.",
         });
         return;
       }
 
+      const contentParts: Array<
+        | { text: string }
+        | { inlineData: { mimeType: string; data: string } }
+      > = [];
+
+      let extractedFileText = "";
+
+      if (hasFile && fileData) {
+        const lowerName = fileData.fileName.toLowerCase();
+        const cleanBase64 = fileData.base64.includes(",")
+          ? fileData.base64.split(",")[1]
+          : fileData.base64;
+
+        if (
+          lowerName.endsWith(".pdf") ||
+          fileData.mimeType === "application/pdf"
+        ) {
+          contentParts.push({
+            inlineData: {
+              mimeType: "application/pdf",
+              data: cleanBase64,
+            },
+          });
+        } else if (
+          lowerName.endsWith(".txt") ||
+          fileData.mimeType.startsWith("text/")
+        ) {
+          extractedFileText = Buffer.from(cleanBase64, "base64").toString("utf-8").trim();
+          if (extractedFileText.length < 20) {
+            res.status(400).json({
+              error: "O arquivo .txt anexado está vazio ou tem pouco conteúdo.",
+            });
+            return;
+          }
+        } else if (
+          lowerName.endsWith(".docx") ||
+          fileData.mimeType ===
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        ) {
+          const buffer = Buffer.from(cleanBase64, "base64");
+          const result = await mammoth.extractRawText({ buffer });
+          extractedFileText = result.value.trim();
+          if (extractedFileText.length < 20) {
+            res.status(400).json({
+              error:
+                "Não foi possível extrair texto suficiente do arquivo .docx anexado.",
+            });
+            return;
+          }
+        } else {
+          res.status(400).json({
+            error: "Formato não suportado. Envie arquivos .pdf, .txt ou .docx.",
+          });
+          return;
+        }
+      }
+
+      const combinedText = [trimmedText, extractedFileText]
+        .filter((s) => s.length > 0)
+        .join("\n\n");
+
+      contentParts.push({
+        text: `Organize o conteúdo programático do edital ${
+          hasFile && fileData ? `(arquivo anexado: ${fileData.fileName})` : ""
+        } em itens acionáveis para um plano de estudos Kanban.\n\nPlano/Edital alvo: ${
+          examName || "Plano de Estudos"
+        }\nDisciplina sugerida: ${
+          disciplineHint || "Identificar automaticamente conforme os tópicos"
+        }${combinedText ? `\n\nTexto do Edital:\n${combinedText}` : "\n\nLeia integralmente o documento PDF anexado e extraia os tópicos do conteúdo programático."}`,
+      });
+
       const ai = getGeminiClient();
       const response = await ai.models.generateContent({
         model: "gemini-4-hydrogen",
-        contents: `Organize o seguinte trecho de edital / conteúdo programático em itens acionáveis para um plano de estudos Kanban.\n\nPlano/Edital alvo: ${examName || "Plano de Estudos"}\nDisciplina sugerida: ${disciplineHint || "Identificar automaticamente conforme os tópicos"}\n\nTexto do Edital:\n${editalText}`,
+        contents: { parts: contentParts },
         config: {
           thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
           systemInstruction:
