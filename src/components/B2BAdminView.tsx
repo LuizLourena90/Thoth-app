@@ -15,6 +15,7 @@ import {
 import type { CohortInfo, EditalCard, ExamTrack, StudyStageId } from "../types";
 
 interface B2BAdminViewProps {
+  viewMode?: "executive" | "cohorts";
   cohorts: CohortInfo[];
   tracks: ExamTrack[];
   activeTrackId: string | null;
@@ -65,6 +66,7 @@ function resolveAtRiskCount(cohort: CohortInfo): number {
 }
 
 export const B2BAdminView: React.FC<B2BAdminViewProps> = ({
+  viewMode = "executive",
   cohorts,
   tracks,
   activeTrackId,
@@ -228,62 +230,125 @@ export const B2BAdminView: React.FC<B2BAdminViewProps> = ({
 
   return (
     <div className="space-y-6 max-w-6xl">
-      {/* Institutional Executive Header */}
-      <div className="bg-white border border-slate-200 rounded-lg p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <div className="text-xs font-medium text-[#1E3A5F]">
-            Painel Executivo B2B · Coordenação Pedagógica
+      {/* Executive Section (Shown on Painel Executivo) */}
+      {viewMode === "executive" && (
+        <>
+          <div className="bg-white border border-slate-200 rounded-lg p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <div className="text-xs font-medium text-[#1E3A5F]">
+                Painel Executivo B2B · Coordenação Pedagógica
+              </div>
+              <h2 className="mt-1 font-editorial text-xl font-semibold text-slate-900">
+                Desempenho das Turmas e Cobertura do Edital
+              </h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Acompanhe a taxa de conclusão do edital, identifique matérias críticas e intervenha em alunos com risco de reprovação.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={onExportPack}
+                disabled={cards.length === 0}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 disabled:opacity-45 disabled:pointer-events-none whitespace-nowrap shrink-0"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Exportar pacote da turma</span>
+              </button>
+              <button
+                type="button"
+                disabled={!activeTrack || cohorts.length === 0}
+                onClick={() =>
+                  setPublishedBanner(
+                    `Plano "${activeTrack?.title}" sincronizado com ${cohorts.filter((c) =>
+                      activeTrackId ? c.publishedTrackIds.includes(activeTrackId) : false
+                    ).length} turmas ativas.`
+                  )
+                }
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-[#1E3A5F] rounded-md hover:bg-[#162D4A] disabled:opacity-45 disabled:pointer-events-none whitespace-nowrap shrink-0"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>Publicar atualizações às turmas</span>
+              </button>
+            </div>
           </div>
-          <h2 className="mt-1 font-editorial text-xl font-semibold text-slate-900">
-            Desempenho das Turmas e Cobertura do Edital
-          </h2>
-          <p className="mt-1 text-sm text-slate-600">
-            Acompanhe a taxa de conclusão do edital, identifique matérias críticas e intervenha em alunos com risco de reprovação.
-          </p>
-        </div>
 
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
-          <button
-            type="button"
-            onClick={onExportPack}
-            disabled={cards.length === 0}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 disabled:opacity-45 disabled:pointer-events-none whitespace-nowrap shrink-0"
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span>Exportar pacote da turma</span>
-          </button>
-          <button
-            type="button"
-            disabled={!activeTrack || cohorts.length === 0}
-            onClick={() =>
-              setPublishedBanner(
-                `Plano "${activeTrack?.title}" sincronizado com ${cohorts.filter((c) =>
-                  activeTrackId ? c.publishedTrackIds.includes(activeTrackId) : false
-                ).length} turmas ativas.`
-              )
-            }
-            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-[#1E3A5F] rounded-md hover:bg-[#162D4A] disabled:opacity-45 disabled:pointer-events-none whitespace-nowrap shrink-0"
-          >
-            <CheckCircle2 className="w-3.5 h-3.5" />
-            <span>Publicar atualizações às turmas</span>
-          </button>
-        </div>
-      </div>
-
-      {publishedBanner && (
-        <div className="px-4 py-3 text-xs font-medium text-emerald-900 bg-emerald-50 border border-emerald-200 rounded-md flex items-center justify-between">
-          <span>{publishedBanner}</span>
-          <button
-            type="button"
-            onClick={() => setPublishedBanner(null)}
-            className="text-emerald-700 hover:underline whitespace-nowrap"
-          >
-            Dispensar
-          </button>
-        </div>
+          {publishedBanner && (
+            <div className="px-4 py-3 text-xs font-medium text-emerald-900 bg-emerald-50 border border-emerald-200 rounded-md flex items-center justify-between">
+              <span>{publishedBanner}</span>
+              <button
+                type="button"
+                onClick={() => setPublishedBanner(null)}
+                className="text-emerald-700 hover:underline whitespace-nowrap"
+              >
+                Dispensar
+              </button>
+            </div>
+          )}
+        </>
       )}
 
-      {!hasLoadedData ? (
+      {/* Cohorts Header (Shown on Turmas & Distribuição) */}
+      {viewMode === "cohorts" && (
+        <>
+          <div className="bg-white border border-slate-200 rounded-lg p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <div className="text-xs font-medium text-[#1E3A5F]">
+                Gestão de Turmas & Editais Padrão
+              </div>
+              <h2 className="mt-1 font-editorial text-xl font-semibold text-slate-900">
+                Distribuição de Editais Padrão para Turmas
+              </h2>
+              <p className="mt-1 text-sm text-slate-600">
+                Cadastre turmas da instituição, libere o edital padrão selecionado e acompanhe a cobertura de materiais por disciplina.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={onExportPack}
+                disabled={cards.length === 0}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 disabled:opacity-45 disabled:pointer-events-none whitespace-nowrap shrink-0"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Exportar pacote da turma</span>
+              </button>
+              <button
+                type="button"
+                disabled={!activeTrack || cohorts.length === 0}
+                onClick={() =>
+                  setPublishedBanner(
+                    `Edital padrão "${activeTrack?.title}" publicado para ${cohorts.filter((c) =>
+                      activeTrackId ? c.publishedTrackIds.includes(activeTrackId) : false
+                    ).length} turmas.`
+                  )
+                }
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-[#1E3A5F] rounded-md hover:bg-[#162D4A] disabled:opacity-45 disabled:pointer-events-none whitespace-nowrap shrink-0"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>Publicar edital às turmas</span>
+              </button>
+            </div>
+          </div>
+
+          {publishedBanner && (
+            <div className="px-4 py-3 text-xs font-medium text-emerald-900 bg-emerald-50 border border-emerald-200 rounded-md flex items-center justify-between">
+              <span>{publishedBanner}</span>
+              <button
+                type="button"
+                onClick={() => setPublishedBanner(null)}
+                className="text-emerald-700 hover:underline whitespace-nowrap"
+              >
+                Dispensar
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {viewMode === "executive" && !hasLoadedData ? (
         /* Illustrative Executive Preview when no cohort/edital data is loaded */
         <section className="bg-white border border-slate-200 rounded-lg overflow-hidden">
           <div className="px-6 py-5 border-b border-slate-200 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -523,7 +588,7 @@ export const B2BAdminView: React.FC<B2BAdminViewProps> = ({
             </div>
           </div>
         </section>
-      ) : (
+      ) : viewMode === "executive" ? (
         /* Live Executive Dashboard when Data is Present */
         <>
           {/* Optional Cohort Scope Filter when cohorts exist */}
@@ -844,9 +909,10 @@ export const B2BAdminView: React.FC<B2BAdminViewProps> = ({
             </section>
           </div>
         </>
-      )}
+      ) : null}
 
       {/* Cohorts Management Table */}
+      {(viewMode === "cohorts" || (viewMode === "executive" && (cohorts.length > 0 || showAddCohort))) && (
       <section className="bg-white border border-slate-200 rounded-lg overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between gap-4">
           <div>
@@ -1008,9 +1074,10 @@ export const B2BAdminView: React.FC<B2BAdminViewProps> = ({
           </div>
         )}
       </section>
+      )}
 
-      {/* Discipline Coverage Matrix (visible whenever cards exist) */}
-      {cards.length > 0 && (
+      {/* Discipline Coverage Matrix (visible on cohorts view when cards exist) */}
+      {viewMode === "cohorts" && cards.length > 0 && (
         <section className="bg-white border border-slate-200 rounded-lg overflow-hidden">
           <div className="px-6 py-4 border-b border-slate-200">
             <h3 className="text-sm font-semibold text-slate-900">

@@ -17,6 +17,7 @@ interface RevisionCenterViewProps {
   onMoveCardStage: (cardId: string, nextStage: StudyStageId) => void;
   onOpenCard: (card: EditalCard) => void;
   onOpenSourcesGenerator: () => void;
+  onRecordQuizAttempt?: (questionId: string, isCorrect: boolean) => void;
 }
 
 export const RevisionCenterView: React.FC<RevisionCenterViewProps> = ({
@@ -25,6 +26,7 @@ export const RevisionCenterView: React.FC<RevisionCenterViewProps> = ({
   onMoveCardStage,
   onOpenCard,
   onOpenSourcesGenerator,
+  onRecordQuizAttempt,
 }) => {
   const [sessionMode, setSessionMode] = useState<"flashcards" | "quiz">("flashcards");
   const [disciplineFilter, setDisciplineFilter] = useState<string>("Todas");
@@ -362,12 +364,20 @@ export const RevisionCenterView: React.FC<RevisionCenterViewProps> = ({
                   <button
                     key={optIdx}
                     type="button"
-                    onClick={() =>
+                    onClick={() => {
+                      const alreadyAnswered =
+                        typeof selectedAnswers[currentQuizItem.question.id] === "number";
                       setSelectedAnswers((prev) => ({
                         ...prev,
                         [currentQuizItem.question.id]: optIdx,
-                      }))
-                    }
+                      }));
+                      if (!alreadyAnswered && onRecordQuizAttempt) {
+                        onRecordQuizAttempt(
+                          currentQuizItem.question.id,
+                          optIdx === currentQuizItem.question.correctIndex
+                        );
+                      }
+                    }}
                     className={`w-full text-left px-4 py-3 text-sm border rounded-md transition-colors flex items-start gap-3 ${cls}`}
                   >
                     <span className="font-mono text-xs font-semibold mt-0.5 shrink-0">

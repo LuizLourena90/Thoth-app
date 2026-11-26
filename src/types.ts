@@ -7,11 +7,35 @@ export type StudyStageId =
 
 export type IncidenceLevel = "Alta" | "Média" | "Base";
 
-export type WorkspaceTab =
-  | "kanban"
-  | "sources"
-  | "revision"
-  | "coordination";
+export type AppEnvironment = "b2c" | "b2b";
+
+export type B2CTab = "kanban" | "sources" | "revision" | "progress";
+
+export type B2BTab =
+  | "executive"
+  | "cohorts"
+  | "standard_edital"
+  | "student_preview";
+
+export type WorkspaceTab = B2CTab | B2BTab;
+
+export interface AuthSession {
+  mode: "demo" | "supabase";
+  environment: AppEnvironment;
+  email?: string;
+  accessToken?: string;
+}
+
+export interface StudentGamificationStats {
+  xp: number;
+  level: number;
+  levelTitle: string;
+  nextLevelXp: number;
+  currentLevelFloorXp: number;
+  streakDays: number;
+  quizzesAnswered: number;
+  quizzesCorrect: number;
+}
 
 export interface StudyStep {
   id: string;
