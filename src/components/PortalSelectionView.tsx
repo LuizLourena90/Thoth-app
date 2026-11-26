@@ -12,10 +12,17 @@ import {
   signInWithSupabase,
   signUpWithSupabase,
 } from "../lib/supabaseAuth";
-import type { AppEnvironment, AuthSession } from "../types";
+import type {
+  AppEnvironment,
+  AuthSession,
+  StudyPlanBoardData,
+} from "../types";
 
 interface PortalSelectionViewProps {
-  onSelectSession: (session: AuthSession) => void;
+  onSelectSession: (
+    session: AuthSession,
+    loadedBoardData?: StudyPlanBoardData | null
+  ) => void;
 }
 
 export const PortalSelectionView: React.FC<PortalSelectionViewProps> = ({
@@ -56,22 +63,26 @@ export const PortalSelectionView: React.FC<PortalSelectionViewProps> = ({
     try {
       const result =
         authMode === "signin"
-          ? await signInWithSupabase(email.trim(), password)
-          : await signUpWithSupabase(email.trim(), password);
+          ? await signInWithSupabase(email.trim(), password, env)
+          : await signUpWithSupabase(email.trim(), password, env);
 
-      if (result.requiresEmailConfirmation) {
+      if (result.requiresEmailConfirmation || !result.profile) {
         setInfoMsg(
-          "Cadastro realizado. Confirme o link enviado ao seu e-mail antes de entrar."
+          "Cadastro realizado. Confirme o link enviado ao seu e-mail para entrar."
         );
         return;
       }
 
-      onSelectSession({
-        mode: "supabase",
-        environment: env,
-        email: result.email,
-        accessToken: result.accessToken,
-      });
+      onSelectSession(
+        {
+          mode: "supabase",
+          userId: result.userId,
+          environment: result.profile.role,
+          planTier: result.profile.plan_tier,
+          email: result.email,
+        },
+        result.boardData
+      );
     } catch (err) {
       setErrorMsg(
         err instanceof Error ? err.message : "Erro ao autenticar com Supabase."
@@ -119,7 +130,7 @@ export const PortalSelectionView: React.FC<PortalSelectionViewProps> = ({
               Escolha o ambiente ideal para o seu perfil de acesso
             </h1>
             <p className="text-sm sm:text-base text-slate-600 leading-relaxed">
-              A Toth separa a jornada individual de estudos da gestão pedagógica de turmas. Entre rapidamente pelo Modo Demonstração ou conecte sua conta via Supabase.
+              Entre com sua conta Supabase para salvar seu Kanban e perfil na nuvem, ou clique em <strong className="font-medium text-slate-800">Acessar Modo Demo</strong> para testar sem login.
             </p>
           </div>
 
@@ -167,12 +178,13 @@ export const PortalSelectionView: React.FC<PortalSelectionViewProps> = ({
                     onSelectSession({
                       mode: "demo",
                       environment: "b2c",
+                      planTier: "free",
                       email: "estudante.demo@toth.app",
                     })
                   }
                   className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-[#1E3A5F] rounded-md hover:bg-[#162D4A] transition-colors whitespace-nowrap"
                 >
-                  <span>Entrar no Modo Demonstração (B2C)</span>
+                  <span>Acessar Modo Demo (B2C)</span>
                   <ArrowRight className="w-4 h-4 shrink-0" />
                 </button>
 
@@ -185,7 +197,7 @@ export const PortalSelectionView: React.FC<PortalSelectionViewProps> = ({
                   <span>
                     {supabaseOpenFor === "b2c"
                       ? "Fechar login via Supabase"
-                      : "Entrar com Supabase"}
+                      : "Cadastrar ou Entrar com Supabase"}
                   </span>
                 </button>
               </div>
@@ -223,7 +235,7 @@ export const PortalSelectionView: React.FC<PortalSelectionViewProps> = ({
                   {!supabaseReady && (
                     <div className="p-2.5 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded">
                       Variáveis <span className="font-mono">VITE_SUPABASE_URL</span> e{" "}
-                      <span className="font-mono">VITE_SUPABASE_ANON_KEY</span> não configuradas. Use o botão acima para acessar via Modo Demonstração.
+                      <span className="font-mono">VITE_SUPABASE_ANON_KEY</span> não configuradas. Use &ldquo;Acessar Modo Demo&rdquo; acima para testar sem login.
                     </div>
                   )}
 
@@ -270,8 +282,8 @@ export const PortalSelectionView: React.FC<PortalSelectionViewProps> = ({
                     {loading
                       ? "Conectando ao Supabase..."
                       : authMode === "signin"
-                        ? "Autenticar como Estudante"
-                        : "Cadastrar conta de Estudante"}
+                        ? "Entrar como Estudante (B2C)"
+                        : "Cadastrar como Estudante (B2C)"}
                   </button>
                 </form>
               )}
@@ -319,12 +331,13 @@ export const PortalSelectionView: React.FC<PortalSelectionViewProps> = ({
                     onSelectSession({
                       mode: "demo",
                       environment: "b2b",
+                      planTier: "enterprise_b2b",
                       email: "coordenacao.demo@toth.app",
                     })
                   }
                   className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-[#1E3A5F] rounded-md hover:bg-[#162D4A] transition-colors whitespace-nowrap"
                 >
-                  <span>Entrar no Modo Demonstração (B2B)</span>
+                  <span>Acessar Modo Demo (B2B)</span>
                   <ArrowRight className="w-4 h-4 shrink-0" />
                 </button>
 
@@ -337,7 +350,7 @@ export const PortalSelectionView: React.FC<PortalSelectionViewProps> = ({
                   <span>
                     {supabaseOpenFor === "b2b"
                       ? "Fechar login via Supabase"
-                      : "Entrar com Supabase"}
+                      : "Cadastrar ou Entrar com Supabase"}
                   </span>
                 </button>
               </div>
@@ -375,7 +388,7 @@ export const PortalSelectionView: React.FC<PortalSelectionViewProps> = ({
                   {!supabaseReady && (
                     <div className="p-2.5 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded">
                       Variáveis <span className="font-mono">VITE_SUPABASE_URL</span> e{" "}
-                      <span className="font-mono">VITE_SUPABASE_ANON_KEY</span> não configuradas. Use o botão acima para acessar via Modo Demonstração.
+                      <span className="font-mono">VITE_SUPABASE_ANON_KEY</span> não configuradas. Use &ldquo;Acessar Modo Demo&rdquo; acima para testar sem login.
                     </div>
                   )}
 
@@ -422,8 +435,8 @@ export const PortalSelectionView: React.FC<PortalSelectionViewProps> = ({
                     {loading
                       ? "Conectando ao Supabase..."
                       : authMode === "signin"
-                        ? "Autenticar como Instituição"
-                        : "Cadastrar conta Institucional"}
+                        ? "Entrar como Instituição (B2B)"
+                        : "Cadastrar como Instituição (B2B)"}
                   </button>
                 </form>
               )}

@@ -9,21 +9,54 @@ export type IncidenceLevel = "Alta" | "Média" | "Base";
 
 export type AppEnvironment = "b2c" | "b2b";
 
-export type B2CTab = "kanban" | "sources" | "revision" | "progress";
+export type PlanTier = "free" | "pro_b2c" | "enterprise_b2b";
+
+export type B2CTab = "kanban" | "sources" | "revision" | "progress" | "plans";
 
 export type B2BTab =
   | "executive"
   | "cohorts"
   | "standard_edital"
-  | "student_preview";
+  | "student_preview"
+  | "plans";
 
 export type WorkspaceTab = B2CTab | B2BTab;
 
 export interface AuthSession {
   mode: "demo" | "supabase";
+  userId?: string;
   environment: AppEnvironment;
+  planTier: PlanTier;
   email?: string;
-  accessToken?: string;
+}
+
+export interface UserProfile {
+  id: string;
+  role: AppEnvironment;
+  plan_tier: PlanTier;
+}
+
+export interface B2CActivityRecord {
+  streakDays: number;
+  lastActiveDate: string | null;
+  quizzesAnswered: number;
+  quizzesCorrect: number;
+}
+
+export interface StudyPlanBoardData {
+  b2c?: {
+    tracks: ExamTrack[];
+    cards: EditalCard[];
+    activeTrackId: string | null;
+    activity: B2CActivityRecord;
+  };
+  b2b?: {
+    tracks: ExamTrack[];
+    cards: EditalCard[];
+    activeTrackId: string | null;
+    cohorts: CohortInfo[];
+    institutionName: string;
+  };
 }
 
 export interface StudentGamificationStats {

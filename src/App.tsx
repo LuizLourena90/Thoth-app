@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Eye, Sparkles, Trash2 } from "lucide-react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, Eye, ShieldCheck, Sparkles, Trash2 } from "lucide-react";
 import { B2BAdminView } from "./components/B2BAdminView";
 import { CardDetailDrawer } from "./components/CardDetailDrawer";
 import { KanbanBoard } from "./components/KanbanBoard";
+import { PlanUpgradeView } from "./components/PlanUpgradeView";
 import { PortalSelectionView } from "./components/PortalSelectionView";
 import { RevisionCenterView } from "./components/RevisionCenterView";
 import { Sidebar } from "./components/Sidebar";
@@ -14,10 +15,19 @@ import {
   createOabDemoCohorts,
   OAB_DEMO_TRACK,
 } from "./data/oabDemoExample";
-import { signOutSupabase } from "./lib/supabaseAuth";
+import {
+  isSupabaseConfigured,
+  restoreSupabaseSession,
+  saveStudyPlanBoardData,
+  signOutSupabase,
+  updateProfilePlanTier,
+  updateProfileRole,
+} from "./lib/supabaseAuth";
 import type {
+  AppEnvironment,
   AuthSession,
   B2BTab,
+  B2CActivityRecord,
   B2CTab,
   CohortInfo,
   EditalCard,
@@ -25,7 +35,9 @@ import type {
   ExamTrack,
   Flashcard,
   IncidenceLevel,
+  PlanTier,
   StudentGamificationStats,
+  StudyPlanBoardData,
   StudyStageId,
   WorkspaceTab,
 } from "./types";
@@ -38,13 +50,6 @@ const B2B_CARDS_KEY = "toth_b2b_cards_v1";
 const B2B_TRACKS_KEY = "toth_b2b_tracks_v1";
 const B2B_COHORTS_KEY = "toth_b2b_cohorts_v1";
 const B2B_INST_KEY = "toth_b2b_inst_v1";
-
-interface B2CActivityRecord {
-  streakDays: number;
-  lastActiveDate: string | null;
-  quizzesAnswered: number;
-  quizzesCorrect: number;
-}
 
 const DEFAULT_ACTIVITY: B2CActivityRecord = {
   streakDays: 0,
@@ -176,6 +181,14 @@ function computeGamificationStats(
 
 export default function App() {
   const [session, setSession] = useState<AuthSession | null>(null);
+  const [bootstrappingSession, setBootstrappingSession] = useState<boolean>(
+    () => isSupabaseConfigured()
+  );
+  const [syncStatus, setSyncStatus] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
+  const supabaseHydratedRef = useRef(false);
+
   const [b2cTab, setB2cTab] = useState<B2CTab>("kanban");
   const [b2bTab, setB2bTab] = useState<B2BTab>("executive");
   const [b2bEditalSubView, setB2bEditalSubView] = useState<"kanban" | "sources">("kanban");
@@ -213,57 +226,123 @@ export default function App() {
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  // Persist B2C state
+  const applySupabaseBoardData = (boardData?: StudyPlanBoardData | null) => {
+    const b2c = boardData?.b2c;
+    const b2b = boardData?.b2b;
+
+    const nextB2cTracks = Array.isArray(b2c?.tracks) ? b2c.tracks : [];
+    const nextB2cCards = Array.isArray(b2c?.cards) ? b2c.cards : [];
+    setB2cTracks(nextB2cTracks);
+    setB2cCards(nextB2cCards);
+    setB2cActiveTrackId(b2c?.activeTrackId ?? nextB2cTracks[0]?.id ?? null);
+    setB2cActivity(b2c?.activity ?? DEFAULT_ACTIVITY);
+
+    const nextB2bTracks = Array.isArray(b2b?.tracks) ? b2b.tracks : [];
+    const nextB2bCards = Array.isArray(b2b?.cards) ? b2b.cards : [];
+    setB2bTracks(nextB2bTracks);
+    setB2bCards(nextB2bCards);
+    setB2bActiveTrackId(b2b?.activeTrackId ?? nextB2bTracks[0]?.id ?? null);
+    setCohorts(Array.isArray(b2b?.cohorts) ? b2b.cohorts : []);
+    setInstitutionName(
+      b2b?.institutionName && b2b.institutionName.trim().length > 0
+        ? b2b.institutionName
+        : "Minha Instituição"
+    );
+  };
+
+  // Restore existing Supabase session on load if configured
   useEffect(() => {
+    if (!isSupabaseConfigured()) {
+      setBootstrappingSession(false);
+      return;
+    }
+
+    let cancelled = false;
+    restoreSupabaseSession()
+      .then((bundle) => {
+        if (cancelled || !bundle || !bundle.profile) return;
+        applySupabaseBoardData(bundle.boardData);
+        supabaseHydratedRef.current = true;
+        setSession({
+          mode: "supabase",
+          userId: bundle.userId,
+          environment: bundle.profile.role,
+          planTier: bundle.profile.plan_tier,
+          email: bundle.email,
+        });
+        setB2cTab("kanban");
+        setB2bTab("executive");
+        setSyncStatus("saved");
+      })
+      .catch(() => {
+        // Ignore restore failure and let user sign in manually
+      })
+      .finally(() => {
+        if (!cancelled) setBootstrappingSession(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Persist Demo Mode state locally (skipped when authenticated via Supabase so cloud accounts stay clean)
+  useEffect(() => {
+    if (session?.mode === "supabase") return;
     try {
       localStorage.setItem(B2C_CARDS_KEY, JSON.stringify(b2cCards));
     } catch {
       // Ignore quota errors
     }
-  }, [b2cCards]);
+  }, [b2cCards, session?.mode]);
 
   useEffect(() => {
+    if (session?.mode === "supabase") return;
     try {
       localStorage.setItem(B2C_TRACKS_KEY, JSON.stringify(b2cTracks));
     } catch {
       // Ignore quota errors
     }
-  }, [b2cTracks]);
+  }, [b2cTracks, session?.mode]);
 
   useEffect(() => {
+    if (session?.mode === "supabase") return;
     try {
       localStorage.setItem(B2C_ACTIVITY_KEY, JSON.stringify(b2cActivity));
     } catch {
       // Ignore quota errors
     }
-  }, [b2cActivity]);
+  }, [b2cActivity, session?.mode]);
 
-  // Persist B2B state
   useEffect(() => {
+    if (session?.mode === "supabase") return;
     try {
       localStorage.setItem(B2B_CARDS_KEY, JSON.stringify(b2bCards));
     } catch {
       // Ignore quota errors
     }
-  }, [b2bCards]);
+  }, [b2bCards, session?.mode]);
 
   useEffect(() => {
+    if (session?.mode === "supabase") return;
     try {
       localStorage.setItem(B2B_TRACKS_KEY, JSON.stringify(b2bTracks));
     } catch {
       // Ignore quota errors
     }
-  }, [b2bTracks]);
+  }, [b2bTracks, session?.mode]);
 
   useEffect(() => {
+    if (session?.mode === "supabase") return;
     try {
       localStorage.setItem(B2B_COHORTS_KEY, JSON.stringify(cohorts));
     } catch {
       // Ignore quota errors
     }
-  }, [cohorts]);
+  }, [cohorts, session?.mode]);
 
   useEffect(() => {
+    if (session?.mode === "supabase") return;
     try {
       if (institutionName.trim().length > 0) {
         localStorage.setItem(B2B_INST_KEY, institutionName);
@@ -273,7 +352,56 @@ export default function App() {
     } catch {
       // Ignore quota errors
     }
-  }, [institutionName]);
+  }, [institutionName, session?.mode]);
+
+  // Debounced auto-save to Supabase study_plans (board_data) when logged in
+  useEffect(() => {
+    if (
+      session?.mode !== "supabase" ||
+      !session.userId ||
+      !supabaseHydratedRef.current
+    ) {
+      return;
+    }
+
+    const userId = session.userId;
+    setSyncStatus("saving");
+    const timer = window.setTimeout(() => {
+      const payload: StudyPlanBoardData = {
+        b2c: {
+          tracks: b2cTracks,
+          cards: b2cCards,
+          activeTrackId: b2cActiveTrackId,
+          activity: b2cActivity,
+        },
+        b2b: {
+          tracks: b2bTracks,
+          cards: b2bCards,
+          activeTrackId: b2bActiveTrackId,
+          cohorts,
+          institutionName,
+        },
+      };
+
+      saveStudyPlanBoardData(userId, payload)
+        .then(() => setSyncStatus("saved"))
+        .catch(() => setSyncStatus("error"));
+    }, 550);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    session?.mode,
+    session?.userId,
+    b2cTracks,
+    b2cCards,
+    b2cActiveTrackId,
+    b2cActivity,
+    b2bTracks,
+    b2bCards,
+    b2bActiveTrackId,
+    cohorts,
+    institutionName,
+  ]);
 
   const showNotice = (msg: string) => {
     setNotice(msg);
@@ -288,7 +416,9 @@ export default function App() {
     setB2cActivity((prev) => {
       if (prev.lastActiveDate === today) return prev;
       const nextStreak =
-        prev.lastActiveDate === yesterday ? prev.streakDays + 1 : Math.max(1, prev.streakDays === 0 ? 1 : 1);
+        prev.lastActiveDate === yesterday
+          ? prev.streakDays + 1
+          : Math.max(1, prev.streakDays === 0 ? 1 : 1);
       return {
         ...prev,
         streakDays: nextStreak,
@@ -395,6 +525,18 @@ export default function App() {
     banca: string;
     targetDate: string;
   }) => {
+    if (
+      session?.planTier === "free" &&
+      tracks.length >= 1 &&
+      session.mode === "supabase"
+    ) {
+      showNotice(
+        "O plano Free inclui 1 edital ativo. Faça upgrade em 'Planos & Upgrade' para criar múltiplos editais."
+      );
+      handleSelectTab("plans");
+      return;
+    }
+
     const newTrack: ExamTrack = {
       id: `plano-${environment}-${Date.now()}`,
       title: input.title,
@@ -649,9 +791,11 @@ export default function App() {
 
   const handleClearCurrentEnvironment = () => {
     if (environment === "b2c") {
-      localStorage.removeItem(B2C_CARDS_KEY);
-      localStorage.removeItem(B2C_TRACKS_KEY);
-      localStorage.removeItem(B2C_ACTIVITY_KEY);
+      if (session?.mode !== "supabase") {
+        localStorage.removeItem(B2C_CARDS_KEY);
+        localStorage.removeItem(B2C_TRACKS_KEY);
+        localStorage.removeItem(B2C_ACTIVITY_KEY);
+      }
       setB2cCards([]);
       setB2cTracks([]);
       setB2cActiveTrackId(null);
@@ -659,10 +803,12 @@ export default function App() {
       setSelectedCardId(null);
       showNotice("Seu quadro individual foi limpo.");
     } else {
-      localStorage.removeItem(B2B_CARDS_KEY);
-      localStorage.removeItem(B2B_TRACKS_KEY);
-      localStorage.removeItem(B2B_COHORTS_KEY);
-      localStorage.removeItem(B2B_INST_KEY);
+      if (session?.mode !== "supabase") {
+        localStorage.removeItem(B2B_CARDS_KEY);
+        localStorage.removeItem(B2B_TRACKS_KEY);
+        localStorage.removeItem(B2B_COHORTS_KEY);
+        localStorage.removeItem(B2B_INST_KEY);
+      }
       setB2bCards([]);
       setB2bTracks([]);
       setCohorts([]);
@@ -673,7 +819,32 @@ export default function App() {
     }
   };
 
-  const handleEnterSession = (nextSession: AuthSession) => {
+  const handleEnterSession = (
+    nextSession: AuthSession,
+    loadedBoardData?: StudyPlanBoardData | null
+  ) => {
+    if (nextSession.mode === "supabase") {
+      applySupabaseBoardData(loadedBoardData);
+      supabaseHydratedRef.current = true;
+      setSyncStatus("saved");
+    } else {
+      supabaseHydratedRef.current = false;
+      // Rehydrate Demo localStorage cleanly
+      const demoB2cTracks = loadStoredArray<ExamTrack>(B2C_TRACKS_KEY);
+      const demoB2bTracks = loadStoredArray<ExamTrack>(B2B_TRACKS_KEY);
+      setB2cTracks(demoB2cTracks);
+      setB2cCards(loadStoredArray<EditalCard>(B2C_CARDS_KEY));
+      setB2cActiveTrackId(demoB2cTracks[0]?.id ?? null);
+      setB2cActivity(loadStoredActivity());
+
+      setB2bTracks(demoB2bTracks);
+      setB2bCards(loadStoredArray<EditalCard>(B2B_CARDS_KEY));
+      setB2bActiveTrackId(demoB2bTracks[0]?.id ?? null);
+      setCohorts(loadStoredArray<CohortInfo>(B2B_COHORTS_KEY));
+      setInstitutionName(loadStoredInstitution());
+      setSyncStatus("idle");
+    }
+
     setSession(nextSession);
     setSelectedCardId(null);
     setNotice(null);
@@ -684,9 +855,9 @@ export default function App() {
     }
   };
 
-  const handleSwitchEnvironment = () => {
+  const handleSwitchEnvironment = async () => {
     if (!session) return;
-    const nextEnv = session.environment === "b2c" ? "b2b" : "b2c";
+    const nextEnv: AppEnvironment = session.environment === "b2c" ? "b2b" : "b2c";
     setSession({
       ...session,
       environment: nextEnv,
@@ -699,16 +870,58 @@ export default function App() {
       setB2bTab("executive");
       showNotice("Ambiente alternado para Toth Instituições (B2B).");
     }
+    if (session.mode === "supabase" && session.userId) {
+      updateProfileRole(session.userId, nextEnv).catch(() => {
+        // Non-blocking profile role update
+      });
+    }
+  };
+
+  const handleChangePlanTier = async (nextTier: PlanTier) => {
+    if (!session) return;
+    const nextRole: AppEnvironment =
+      nextTier === "enterprise_b2b"
+        ? "b2b"
+        : nextTier === "pro_b2c"
+          ? "b2c"
+          : session.environment;
+
+    if (session.mode === "supabase" && session.userId) {
+      const updated = await updateProfilePlanTier(
+        session.userId,
+        nextTier,
+        nextTier !== "free" ? nextRole : undefined
+      );
+      setSession({
+        ...session,
+        planTier: updated.plan_tier,
+      });
+    } else {
+      setSession({
+        ...session,
+        planTier: nextTier,
+      });
+    }
+    showNotice(`Plano atualizado para ${nextTier}.`);
   };
 
   const handleExitToPortal = async () => {
-    if (session?.mode === "supabase" && session.accessToken) {
-      await signOutSupabase(session.accessToken);
+    if (session?.mode === "supabase") {
+      await signOutSupabase();
     }
+    supabaseHydratedRef.current = false;
     setSession(null);
     setSelectedCardId(null);
     setNotice(null);
   };
+
+  if (bootstrappingSession) {
+    return (
+      <div className="min-h-screen bg-[#F7F8FA] flex items-center justify-center p-6 text-sm text-slate-600">
+        Restaurando sessão Supabase...
+      </div>
+    );
+  }
 
   if (!session) {
     return <PortalSelectionView onSelectSession={handleEnterSession} />;
@@ -729,6 +942,7 @@ export default function App() {
     sources: "Importador de Edital & Fontes IA",
     revision: "Resumos e Revisões com IA",
     progress: "Meu Progresso & Gamificação",
+    plans: "Planos e Upgrade",
   };
 
   const b2bTitles: Record<B2BTab, string> = {
@@ -736,6 +950,7 @@ export default function App() {
     cohorts: "Gestão de Turmas & Editais Padrão",
     standard_edital: "Editais Padrão & Gerador IA",
     student_preview: "Simulação da Visão do Aluno",
+    plans: "Planos e Upgrade Institucional",
   };
 
   const currentTabTitle =
@@ -754,6 +969,8 @@ export default function App() {
         onSelectTab={handleSelectTab}
         userEmail={session.email}
         authMode={session.mode}
+        planTier={session.planTier}
+        syncStatus={syncStatus}
         institutionName={institutionName}
         onUpdateInstitutionName={setInstitutionName}
         gamification={environment === "b2c" ? gamificationStats : undefined}
@@ -837,6 +1054,29 @@ export default function App() {
           </div>
         </header>
 
+        {/* Plan Tier Soft Upgrade Prompts */}
+        {session.planTier === "free" &&
+          activeTab !== "plans" &&
+          (environment === "b2b" || cards.length >= 12) && (
+            <div className="mx-6 mt-4 px-4 py-2.5 text-xs bg-white border border-slate-300 rounded-md flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-slate-700">
+                <ShieldCheck className="w-4 h-4 text-[#1E3A5F] shrink-0" />
+                <span>
+                  {environment === "b2b"
+                    ? "Você está visualizando o ambiente institucional no Plano Free. Ative o Enterprise B2B para liberar distribuição ilimitada às turmas."
+                    : `Plano Free (${cards.length}/15 tópicos utilizados). Faça upgrade para o Pro B2C para editais e revisões com IA ilimitadas.`}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleSelectTab("plans")}
+                className="text-xs font-semibold text-[#1E3A5F] hover:underline whitespace-nowrap"
+              >
+                Ver planos e upgrade →
+              </button>
+            </div>
+          )}
+
         {/* Live Feedback Banner */}
         {notice && (
           <div className="mx-6 mt-4 px-4 py-2.5 text-xs font-medium text-[#1E3A5F] bg-white border border-slate-300 rounded-md flex items-center justify-between">
@@ -893,6 +1133,18 @@ export default function App() {
                   gamification={gamificationStats}
                   onOpenSourcesGenerator={() => setB2cTab("sources")}
                   onGoToKanban={() => setB2cTab("kanban")}
+                />
+              )}
+
+              {b2cTab === "plans" && (
+                <PlanUpgradeView
+                  currentPlanTier={session.planTier}
+                  currentEnvironment={environment}
+                  authMode={session.mode}
+                  onChangePlanTier={handleChangePlanTier}
+                  onGoToEnvironment={(env) => {
+                    if (env !== environment) void handleSwitchEnvironment();
+                  }}
                 />
               )}
             </>
@@ -1066,6 +1318,18 @@ export default function App() {
                     />
                   )}
                 </div>
+              )}
+
+              {b2bTab === "plans" && (
+                <PlanUpgradeView
+                  currentPlanTier={session.planTier}
+                  currentEnvironment={environment}
+                  authMode={session.mode}
+                  onChangePlanTier={handleChangePlanTier}
+                  onGoToEnvironment={(env) => {
+                    if (env !== environment) void handleSwitchEnvironment();
+                  }}
+                />
               )}
             </>
           )}

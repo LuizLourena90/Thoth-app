@@ -18,6 +18,7 @@ import {
   Pencil,
   Plus,
   Scale,
+  ShieldCheck,
   SlidersHorizontal,
   Sparkles,
   Trash2,
@@ -28,6 +29,7 @@ import type {
   B2BTab,
   B2CTab,
   ExamTrack,
+  PlanTier,
   StudentGamificationStats,
   WorkspaceTab,
 } from "../types";
@@ -38,6 +40,8 @@ interface SidebarProps {
   onSelectTab: (tab: WorkspaceTab) => void;
   userEmail?: string;
   authMode: "demo" | "supabase";
+  planTier: PlanTier;
+  syncStatus?: "idle" | "saving" | "saved" | "error";
   institutionName: string;
   onUpdateInstitutionName: (name: string) => void;
   gamification?: StudentGamificationStats;
@@ -62,6 +66,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectTab,
   userEmail,
   authMode,
+  planTier,
+  syncStatus = "idle",
   institutionName,
   onUpdateInstitutionName,
   gamification,
@@ -116,6 +122,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: "Meu Progresso",
       icon: <TrendingUp className="w-4 h-4 shrink-0" />,
     },
+    {
+      id: "plans",
+      label: "Planos & Upgrade",
+      icon: <ShieldCheck className="w-4 h-4 shrink-0" />,
+    },
   ];
 
   const b2bNavItems: Array<{
@@ -145,7 +156,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: "Simular Visão do Aluno",
       icon: <Eye className="w-4 h-4 shrink-0" />,
     },
+    {
+      id: "plans",
+      label: "Planos & Upgrade",
+      icon: <ShieldCheck className="w-4 h-4 shrink-0" />,
+    },
   ];
+
+  const planTierLabelMap: Record<PlanTier, string> = {
+    free: "Plano Free",
+    pro_b2c: "Pro B2C",
+    enterprise_b2b: "Enterprise B2B",
+  };
 
   const navItems = environment === "b2c" ? b2cNavItems : b2bNavItems;
 
@@ -197,8 +219,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     ? userEmail
                     : "Estudante · Jornada B2C"}
                 </div>
-                <div className="text-[11px] text-slate-500">
-                  {authMode === "supabase" ? "Conta conectada" : "Modo Demonstração"}
+                <div className="text-[11px] text-slate-500 flex items-center gap-1.5">
+                  <span>{planTierLabelMap[planTier]}</span>
+                  <span aria-hidden="true">·</span>
+                  <span>
+                    {authMode === "supabase"
+                      ? syncStatus === "saving"
+                        ? "Salvando..."
+                        : syncStatus === "error"
+                          ? "Erro de sync"
+                          : "Supabase"
+                      : "Demo"}
+                  </span>
                 </div>
               </div>
             </div>
@@ -262,8 +294,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
             )}
 
             <div className="mt-0.5 text-xs text-slate-500 font-mono tabular-nums">
-              {totalStudents} {totalStudents === 1 ? "aluno cadastrado" : "alunos cadastrados"}
+              {totalStudents} {totalStudents === 1 ? "aluno cadastrado" : "alunos cadastrados"} · {planTierLabelMap[planTier]}
             </div>
+            {authMode === "supabase" && (
+              <div className="mt-0.5 text-[11px] text-slate-500">
+                {syncStatus === "saving"
+                  ? "Salvando no Supabase..."
+                  : syncStatus === "error"
+                    ? "Erro ao sincronizar study_plans"
+                    : "Sincronizado com Supabase"}
+              </div>
+            )}
           </div>
         )}
 
