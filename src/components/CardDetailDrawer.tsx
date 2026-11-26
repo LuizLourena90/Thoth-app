@@ -12,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { STUDY_STAGES } from "../data/kanbanConfig";
+import { getDisciplineBadgeClasses } from "../utils/disciplineColors";
 import type { EditalCard, ExamQuestion, Flashcard, StudyStageId } from "../types";
 
 interface CardDetailDrawerProps {
@@ -154,7 +155,9 @@ export const CardDetailDrawer: React.FC<CardDetailDrawerProps> = ({
         <div className="px-6 py-5 border-b border-slate-200 flex items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-              <span className="font-semibold text-[#1E3A5F]">{card.discipline}</span>
+              <span className={getDisciplineBadgeClasses(card.discipline)}>
+                {card.discipline}
+              </span>
               <span aria-hidden="true">·</span>
               <span>Prioridade {card.incidence}</span>
             </div>

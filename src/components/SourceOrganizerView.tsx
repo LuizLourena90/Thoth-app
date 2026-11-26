@@ -12,6 +12,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
+import { getDisciplineBadgeClasses } from "../utils/disciplineColors";
 import type {
   EditalCard,
   ExamQuestion,
@@ -609,10 +610,15 @@ export const SourceOrganizerView: React.FC<SourceOrganizerViewProps> = ({
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h3 className="text-sm font-semibold text-slate-900">
-                  Prévia dos itens estruturados
+                  Prévia dos subtópicos estruturados
+                  {parsedItems.length > 0 && (
+                    <span className="ml-2 font-mono text-xs font-medium text-slate-500">
+                      ({parsedItems.length} subtópicos)
+                    </span>
+                  )}
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Revise os tópicos extraídos antes de adicionar ao Kanban.
+                  Cada subtópico gerará um card independente no Kanban com a tag da disciplina.
                 </p>
               </div>
               {parsedItems.length > 0 && (
@@ -635,11 +641,11 @@ export const SourceOrganizerView: React.FC<SourceOrganizerViewProps> = ({
                 <Loader2 className="w-6 h-6 text-[#1E3A5F] mx-auto animate-spin" />
                 <div className="text-sm font-medium text-slate-800">
                   {attachedFile
-                    ? `Extraindo conteúdo de ${attachedFile.fileName}...`
-                    : "Organizando conteúdo programático..."}
+                    ? `Extraindo subtópicos de ${attachedFile.fileName}...`
+                    : "Organizando subtópicos do edital..."}
                 </div>
                 <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                  A IA está identificando matérias, tópicos, referências e etapas de estudo para montar a prévia do Kanban.
+                  A IA está quebrando cada disciplina em subtópicos individuais do edital para montar os cards do Kanban.
                 </p>
               </div>
             ) : parsedItems.length === 0 ? (
@@ -649,11 +655,11 @@ export const SourceOrganizerView: React.FC<SourceOrganizerViewProps> = ({
                   Nenhum edital processado ainda
                 </div>
                 <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                  Anexe um arquivo (.pdf, .txt, .docx) ou cole o texto ao lado para preencher automaticamente a prévia dos tópicos do Kanban.
+                  Anexe um arquivo (.pdf, .txt, .docx) ou cole o texto ao lado para preencher automaticamente a prévia granular dos subtópicos do Kanban.
                 </p>
               </div>
             ) : (
-              <div className="divide-y divide-slate-200 border border-slate-200 rounded-md">
+              <div className="divide-y divide-slate-200 border border-slate-200 rounded-md max-h-[720px] overflow-y-auto">
                 {parsedItems.map((item, idx) => {
                   const checked = !!selectedParsedIdx[idx];
                   return (
@@ -672,14 +678,17 @@ export const SourceOrganizerView: React.FC<SourceOrganizerViewProps> = ({
                         />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
-                            <span className="font-semibold text-[#1E3A5F]">
+                            <span
+                              className={getDisciplineBadgeClasses(item.discipline)}
+                              title={item.discipline}
+                            >
                               {item.discipline}
                             </span>
-                            <span className="font-mono tabular-nums">
+                            <span className="font-mono tabular-nums shrink-0">
                               Prioridade {item.incidence} · ~{item.estimatedMinutes} min
                             </span>
                           </div>
-                          <h4 className="mt-1 text-sm font-semibold text-slate-900">
+                          <h4 className="mt-1.5 text-sm font-semibold text-slate-900">
                             {item.topic}
                           </h4>
                           <div className="mt-0.5 font-mono text-xs text-slate-500">

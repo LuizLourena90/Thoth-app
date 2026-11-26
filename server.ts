@@ -148,13 +148,23 @@ async function startServer() {
         .join("\n\n");
 
       contentParts.push({
-        text: `Organize o conteúdo programático do edital ${
+        text: `Analise integralmente o conteúdo programático do edital ${
           hasFile && fileData ? `(arquivo anexado: ${fileData.fileName})` : ""
-        } em itens acionáveis para um plano de estudos Kanban.\n\nPlano/Edital alvo: ${
-          examName || "Plano de Estudos"
-        }\nDisciplina sugerida: ${
-          disciplineHint || "Identificar automaticamente conforme os tópicos"
-        }${combinedText ? `\n\nTexto do Edital:\n${combinedText}` : "\n\nLeia integralmente o documento PDF anexado e extraia os tópicos do conteúdo programático."}`,
+        } e decomponha-o de forma granular em subtópicos independentes para um plano de estudos Kanban.
+
+Plano/Edital alvo: ${examName || "Plano de Estudos"}
+Disciplina sugerida: ${
+          disciplineHint || "Identificar automaticamente a disciplina principal de cada grupo"
+        }
+
+REGRAS OBRIGATÓRIAS DE EXTRAÇÃO:
+1. REGRA DE GRANULARIDADE: NUNCA crie apenas 1 card genérico por disciplina (por exemplo, NÃO crie apenas "História do Brasil" ou "Direito Internacional"). Quebre CADA disciplina em seus subtópicos individuais numerados ou nomeados no edital (ex.: "1.1 Expansão ultramarina", "1.2 Economia açucareira", "2.1 Período Regencial"), gerando 1 objeto independente no array para cada subtópico.
+2. TAG DA DISCIPLINA vs TÍTULO DO SUBTÓPICO: Preencha "discipline" com o nome exato da disciplina principal (ex.: "Direito Internacional", "Política Internacional", "História do Brasil") e preencha "topic" com o subtópico específico (mantendo a numeração original quando houver).
+3. VOLUME DE COBERTURA: Em editais extensos ou anexos completos (como CACD, OAB ou concursos), extraia entre 15 e 40 subtópicos detalhados cobrindo as diferentes disciplinas do conteúdo programático. Se o texto enviado for curto e tiver menos de 15 subtópicos reais, extraia todos os subtópicos distintos presentes sem inventar conteúdo.${
+          combinedText
+            ? `\n\nTexto do Edital:\n${combinedText}`
+            : "\n\nLeia integralmente todas as páginas do documento PDF anexado e extraia de 15 a 40 subtópicos granulares do conteúdo programático."
+        }`,
       });
 
       const ai = getGeminiClient();
@@ -162,9 +172,10 @@ async function startServer() {
         model: "gemini-4-hydrogen",
         contents: { parts: contentParts },
         config: {
+          maxOutputTokens: 32768,
           thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
           systemInstruction:
-            "Você é um coordenador pedagógico especialista em estruturação de editais de provas, concursos e exames institucionais. Extraia de 3 a 10 tópicos claros e não redundantes do edital fornecido. Para cada tópico, identifique a disciplina/matéria, as referências normativas ou bibliográficas centrais, a incidência estimada em provas ('Alta', 'Média' ou 'Base'), o tempo estimado de estudo em minutos (entre 30 e 120), um resumo inicial objetivo em português claro, 2 a 3 pegadinhas comuns de banca e 3 a 4 passos de estudo (checklist).",
+            "Você é um coordenador pedagógico especialista em decomposição granular de editais extensos (CACD, OAB, magistratura, concursos públicos). Regra absoluta: nunca agrupe uma disciplina inteira em um único tópico genérico; quebre cada matéria em seus subtópicos individuais do edital (ex.: '1.1 Expansão ultramarina', '1.2 Economia açucareira'), mirando de 15 a 40 subtópicos detalhados em editais longos. Para manter todos os subtópicos em JSON válido sem truncamento, seja objetivo em cada campo: 'discipline' recebe apenas o nome da disciplina principal, 'topic' recebe o subtópico específico, 'normativeRefs' traz as referências centrais, 'incidence' é 'Alta', 'Média' ou 'Base', 'estimatedMinutes' fica entre 30 e 120, 'initialSummary' tem 2 a 3 frases objetivas e densas, 'keyTraps' traz 2 pegadinhas clássicas curtas e 'checklist' traz 3 passos concretos de estudo.",
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
@@ -176,15 +187,18 @@ async function startServer() {
                   properties: {
                     discipline: {
                       type: Type.STRING,
-                      description: "Nome da matéria ou disciplina do edital.",
+                      description:
+                        "Nome exato da disciplina principal a que pertence o subtópico (ex.: 'Direito Internacional', 'Política Internacional', 'História do Brasil').",
                     },
                     topic: {
                       type: Type.STRING,
-                      description: "Título objetivo do tópico do edital para o cartão Kanban.",
+                      description:
+                        "Título do subtópico específico do edital para o cartão Kanban (ex.: '1.1 Expansão ultramarina', '2.1 Período Regencial'). Nunca usar apenas o nome genérico da disciplina.",
                     },
                     normativeRefs: {
                       type: Type.STRING,
-                      description: "Artigos de lei, súmulas, normas ou capítulos bibliográficos aplicáveis.",
+                      description:
+                        "Artigos de lei, tratados, súmulas, normas ou autores/marcos aplicáveis ao subtópico.",
                     },
                     incidence: {
                       type: Type.STRING,
@@ -192,21 +206,23 @@ async function startServer() {
                     },
                     estimatedMinutes: {
                       type: Type.INTEGER,
-                      description: "Tempo estimado em minutos para estudo e revisão inicial.",
+                      description:
+                        "Tempo estimado em minutos (30 a 120) para estudo e revisão deste subtópico.",
                     },
                     initialSummary: {
                       type: Type.STRING,
-                      description: "Resumo inicial direto ao ponto em 2 a 4 parágrafos curtos.",
+                      description:
+                        "Resumo inicial objetivo em 2 a 3 frases claras sobre o subtópico.",
                     },
                     keyTraps: {
                       type: Type.ARRAY,
                       items: { type: Type.STRING },
-                      description: "Pegadinhas ou distinções clássicas cobradas em prova.",
+                      description: "2 pegadinhas ou distinções clássicas cobradas em prova.",
                     },
                     checklist: {
                       type: Type.ARRAY,
                       items: { type: Type.STRING },
-                      description: "Lista de 3 a 4 etapas concretas de estudo.",
+                      description: "Lista de 3 etapas concretas de estudo para este subtópico.",
                     },
                   },
                   required: [
@@ -227,7 +243,14 @@ async function startServer() {
         },
       });
 
-      const parsed = JSON.parse((response.text ?? '{"items":[]}').trim()) as {
+      const rawText = (response.text ?? '{"items":[]}')
+        .trim()
+        .replace(/^```json\s*/i, "")
+        .replace(/^```\s*/i, "")
+        .replace(/\s*```$/i, "")
+        .trim();
+
+      const parsed = JSON.parse(rawText || '{"items":[]}') as {
         items?: unknown[];
       };
       res.json({ items: parsed.items ?? [] });

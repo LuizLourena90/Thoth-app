@@ -11,6 +11,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { STUDY_STAGES } from "../data/kanbanConfig";
+import { getDisciplineBadgeClasses } from "../utils/disciplineColors";
 import type { EditalCard, IncidenceLevel, StudyStageId } from "../types";
 
 interface KanbanBoardProps {
@@ -419,9 +420,12 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                           }`}
                           onClick={() => onSelectCard(card)}
                         >
-                          {/* Clean Unboxed Kicker Metadata */}
-                          <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
-                            <span className="font-medium text-slate-700 truncate">
+                          {/* Discipline Colored Tag & Incidence */}
+                          <div className="flex items-center justify-between gap-2 text-[11px]">
+                            <span
+                              className={getDisciplineBadgeClasses(card.discipline)}
+                              title={card.discipline}
+                            >
                               {card.discipline}
                             </span>
                             <span
@@ -439,8 +443,8 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                             </span>
                           </div>
 
-                          {/* Card Title */}
-                          <h4 className="mt-1.5 text-sm font-semibold text-slate-900 leading-snug group-hover:text-[#1E3A5F] transition-colors">
+                          {/* Card Subtopic Title */}
+                          <h4 className="mt-2 text-sm font-semibold text-slate-900 leading-snug group-hover:text-[#1E3A5F] transition-colors">
                             {card.topic}
                           </h4>
 
