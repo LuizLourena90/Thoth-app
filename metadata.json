@@ -1,0 +1,6 @@
+{
+  "name": "Toth — Organizador de Edital e Plano de Estudos Kanban",
+  "description": "Plataforma para instituições de ensino e estudantes organizarem editais em planos de estudo Kanban, transformando fontes em resumos e revisões ativas.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
