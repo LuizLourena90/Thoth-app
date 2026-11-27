@@ -599,6 +599,7 @@ export default function App() {
 
   const handleAddManualCard = (input: {
     discipline: string;
+    macroTopic?: string;
     topic: string;
     normativeRefs: string;
     incidence: IncidenceLevel;
@@ -609,6 +610,7 @@ export default function App() {
       id: `card-manual-${Date.now()}`,
       trackId,
       discipline: input.discipline,
+      macroTopic: input.macroTopic,
       topic: input.topic,
       normativeRefs: input.normativeRefs,
       incidence: input.incidence,

@@ -161,7 +161,16 @@ export const CardDetailDrawer: React.FC<CardDetailDrawerProps> = ({
               <span aria-hidden="true">·</span>
               <span>Prioridade {card.incidence}</span>
             </div>
-            <h2 className="mt-1.5 font-editorial text-xl font-semibold text-slate-900 leading-snug">
+            {card.macroTopic && (
+              <div className="mt-2 text-xs font-medium text-slate-500 leading-snug">
+                {card.macroTopic}
+              </div>
+            )}
+            <h2
+              className={`${
+                card.macroTopic ? "mt-0.5" : "mt-1.5"
+              } font-editorial text-xl font-semibold text-slate-900 leading-snug`}
+            >
               {card.topic}
             </h2>
             <div className="mt-1 font-mono text-xs text-slate-600">{card.normativeRefs}</div>

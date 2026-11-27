@@ -97,6 +97,7 @@ export interface EditalCard {
   id: string;
   trackId: string;
   discipline: string;
+  macroTopic?: string;
   topic: string;
   normativeRefs: string;
   incidence: IncidenceLevel;

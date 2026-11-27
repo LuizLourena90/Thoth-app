@@ -20,6 +20,7 @@ interface KanbanBoardProps {
   onSelectCard: (card: EditalCard) => void;
   onAddManualCard: (input: {
     discipline: string;
+    macroTopic?: string;
     topic: string;
     normativeRefs: string;
     incidence: IncidenceLevel;
@@ -43,17 +44,20 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   const [showNewForm, setShowNewForm] = useState(false);
 
   const [newDiscipline, setNewDiscipline] = useState("");
+  const [newMacroTopic, setNewMacroTopic] = useState("");
   const [newTopic, setNewTopic] = useState("");
   const [newRefs, setNewRefs] = useState("");
   const [newIncidence, setNewIncidence] = useState<IncidenceLevel>("Alta");
   const [newStage, setNewStage] = useState<StudyStageId>("edital");
 
   const filteredCards = cards.filter((card) => {
+    const q = searchQuery.toLowerCase();
     const matchesSearch =
       searchQuery.trim() === "" ||
-      card.topic.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      card.normativeRefs.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      card.discipline.toLowerCase().includes(searchQuery.toLowerCase());
+      card.topic.toLowerCase().includes(q) ||
+      (card.macroTopic ?? "").toLowerCase().includes(q) ||
+      card.normativeRefs.toLowerCase().includes(q) ||
+      card.discipline.toLowerCase().includes(q);
     const matchesDiscipline =
       selectedDiscipline === "Todas" || card.discipline === selectedDiscipline;
     const matchesIncidence =
@@ -83,12 +87,14 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
     if (!newTopic.trim()) return;
     onAddManualCard({
       discipline: newDiscipline.trim() || "Matéria Geral",
+      macroTopic: newMacroTopic.trim() || undefined,
       topic: newTopic.trim(),
       normativeRefs: newRefs.trim() || "Referências a definir",
       incidence: newIncidence,
       stage: newStage,
     });
     setNewDiscipline("");
+    setNewMacroTopic("");
     setNewTopic("");
     setNewRefs("");
     setNewStage("edital");
@@ -244,28 +250,40 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
             onSubmit={handleCreateSubmit}
             className="pt-3 border-t border-slate-200 grid grid-cols-1 md:grid-cols-12 gap-3 items-end"
           >
-            <div className="md:col-span-3">
+            <div className="md:col-span-2">
               <label className="block text-xs font-medium text-slate-700 mb-1">
-                Matéria / Disciplina
+                Disciplina (Nível 1)
               </label>
               <input
                 type="text"
                 value={newDiscipline}
                 onChange={(e) => setNewDiscipline(e.target.value)}
-                placeholder="Ex.: Direito Civil, Português, Biologia..."
+                placeholder="Ex.: História do Brasil"
                 required
                 className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1E3A5F]"
               />
             </div>
-            <div className="md:col-span-3">
+            <div className="md:col-span-2">
               <label className="block text-xs font-medium text-slate-700 mb-1">
-                Tópico do edital
+                Capítulo / Tópico (Nível 2)
+              </label>
+              <input
+                type="text"
+                value={newMacroTopic}
+                onChange={(e) => setNewMacroTopic(e.target.value)}
+                placeholder="Ex.: 1. Período colonial"
+                className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1E3A5F]"
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Subitem (Nível 3)
               </label>
               <input
                 type="text"
                 value={newTopic}
                 onChange={(e) => setNewTopic(e.target.value)}
-                placeholder="Ex.: Contratos e Obrigações"
+                placeholder="Ex.: 1.1 América Portuguesa"
                 required
                 className="w-full px-3 py-2 text-sm bg-white border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#1E3A5F]"
               />
@@ -420,7 +438,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                           }`}
                           onClick={() => onSelectCard(card)}
                         >
-                          {/* Discipline Colored Tag & Incidence */}
+                          {/* Level 1: Discipline Colored Tag & Incidence */}
                           <div className="flex items-center justify-between gap-2 text-[11px]">
                             <span
                               className={getDisciplineBadgeClasses(card.discipline)}
@@ -443,8 +461,22 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                             </span>
                           </div>
 
-                          {/* Card Subtopic Title */}
-                          <h4 className="mt-2 text-sm font-semibold text-slate-900 leading-snug group-hover:text-[#1E3A5F] transition-colors">
+                          {/* Level 2: Chapter / MacroTopic subtle subtitle */}
+                          {card.macroTopic && (
+                            <div
+                              className="mt-2 text-[11px] font-medium text-slate-500 leading-snug line-clamp-2"
+                              title={card.macroTopic}
+                            >
+                              {card.macroTopic}
+                            </div>
+                          )}
+
+                          {/* Level 3: Specific Subitem Card Title */}
+                          <h4
+                            className={`${
+                              card.macroTopic ? "mt-0.5" : "mt-2"
+                            } text-sm font-semibold text-slate-900 leading-snug group-hover:text-[#1E3A5F] transition-colors`}
+                          >
                             {card.topic}
                           </h4>
 

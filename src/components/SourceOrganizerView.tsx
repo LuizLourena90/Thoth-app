@@ -22,6 +22,7 @@ import type {
 
 interface ParsedEditalItem {
   discipline: string;
+  macroTopic?: string;
   topic: string;
   normativeRefs: string;
   incidence: string;
@@ -29,6 +30,16 @@ interface ParsedEditalItem {
   initialSummary: string;
   keyTraps: string[];
   checklist: string[];
+}
+
+interface ExtractionProgress {
+  phase: "disciplines" | "topics";
+  currentIndex: number;
+  totalDisciplines: number;
+  currentDiscipline: string;
+  extractedCount: number;
+  completedDisciplines: string[];
+  failedDisciplines: Array<{ discipline: string; error: string }>;
 }
 
 interface GeneratedRevisionResult {
@@ -114,7 +125,10 @@ export const SourceOrganizerView: React.FC<SourceOrganizerViewProps> = ({
   const [attachedFile, setAttachedFile] = useState<AttachedEditalFile | null>(null);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const extractionAbortRef = useRef<AbortController | null>(null);
   const [isOrganizing, setIsOrganizing] = useState(false);
+  const [extractionProgress, setExtractionProgress] =
+    useState<ExtractionProgress | null>(null);
   const [editalError, setEditalError] = useState<string | null>(null);
   const [parsedItems, setParsedItems] = useState<ParsedEditalItem[]>([]);
   const [selectedParsedIdx, setSelectedParsedIdx] = useState<Record<number, boolean>>({});
@@ -132,6 +146,10 @@ export const SourceOrganizerView: React.FC<SourceOrganizerViewProps> = ({
   const [generatedRev, setGeneratedRev] = useState<GeneratedRevisionResult | null>(null);
   const [revSavedNotice, setRevSavedNotice] = useState<string | null>(null);
 
+  const handleCancelExtraction = () => {
+    extractionAbortRef.current?.abort();
+  };
+
   const runEditalExtraction = async (options?: {
     overrideFile?: AttachedEditalFile | null;
     overridePlanName?: string;
@@ -144,43 +162,165 @@ export const SourceOrganizerView: React.FC<SourceOrganizerViewProps> = ({
       activeTrackTitle ||
       "Plano de Estudos";
 
+    extractionAbortRef.current?.abort();
+    const abortController = new AbortController();
+    extractionAbortRef.current = abortController;
+
     setIsOrganizing(true);
     setEditalError(null);
     setEditalImportedNotice(null);
+    setParsedItems([]);
+    setSelectedParsedIdx({});
+    setExtractionProgress({
+      phase: "disciplines",
+      currentIndex: 0,
+      totalDisciplines: 0,
+      currentDiscipline: "",
+      extractedCount: 0,
+      completedDisciplines: [],
+      failedDisciplines: [],
+    });
 
     try {
-      const response = await fetch("/api/ai/organize-edital", {
+      const filePayload = fileToSend
+        ? {
+            base64: fileToSend.base64,
+            mimeType: fileToSend.mimeType,
+            fileName: fileToSend.fileName,
+          }
+        : undefined;
+
+      // Etapa 1: Identificar apenas as disciplinas principais (Nível 1)
+      const step1Response = await fetch("/api/ai/extract-disciplines", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: abortController.signal,
         body: JSON.stringify({
           editalText,
           examName: effectivePlanName,
           disciplineHint: disciplineHint.trim() || undefined,
-          fileData: fileToSend
-            ? {
-                base64: fileToSend.base64,
-                mimeType: fileToSend.mimeType,
-                fileName: fileToSend.fileName,
-              }
-            : undefined,
+          fileData: filePayload,
         }),
       });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Não foi possível organizar o edital.");
+      const step1Data = await step1Response.json();
+      if (!step1Response.ok) {
+        throw new Error(
+          step1Data.error || "Não foi possível identificar as disciplinas do edital."
+        );
       }
 
-      const items = (data.items ?? []) as ParsedEditalItem[];
-      setParsedItems(items);
-      const initialSelection: Record<number, boolean> = {};
-      items.forEach((_, idx) => {
-        initialSelection[idx] = true;
-      });
-      setSelectedParsedIdx(initialSelection);
+      const disciplines = (step1Data.disciplines ?? []) as string[];
+      const extractionToken = step1Data.extractionToken as string | undefined;
+
+      if (disciplines.length === 0) {
+        throw new Error(
+          "Nenhuma disciplina encontrada no conteúdo programático enviado."
+        );
+      }
+
+      // Etapa 2: Chamadas sequenciais por disciplina para extrair 100% até o Nível 3
+      let runningItems: ParsedEditalItem[] = [];
+      const completed: string[] = [];
+      const failed: Array<{ discipline: string; error: string }> = [];
+
+      for (let i = 0; i < disciplines.length; i += 1) {
+        if (abortController.signal.aborted) break;
+        const currentDiscipline = disciplines[i];
+
+        setExtractionProgress({
+          phase: "topics",
+          currentIndex: i + 1,
+          totalDisciplines: disciplines.length,
+          currentDiscipline,
+          extractedCount: runningItems.length,
+          completedDisciplines: [...completed],
+          failedDisciplines: [...failed],
+        });
+
+        try {
+          const step2Response = await fetch("/api/ai/extract-discipline-topics", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: abortController.signal,
+            body: JSON.stringify({
+              extractionToken,
+              discipline: currentDiscipline,
+              examName: effectivePlanName,
+              editalText,
+              fileData: filePayload,
+            }),
+          });
+          const step2Data = await step2Response.json();
+          if (!step2Response.ok) {
+            throw new Error(
+              step2Data.error || `Falha ao extrair tópicos de ${currentDiscipline}.`
+            );
+          }
+
+          const rawItems = (step2Data.items ?? []) as ParsedEditalItem[];
+          const normalizedBatch = rawItems.map((it) => ({
+            ...it,
+            discipline: it.discipline?.trim() || currentDiscipline,
+            macroTopic: it.macroTopic?.trim() || undefined,
+          }));
+
+          const prevLength = runningItems.length;
+          runningItems = [...runningItems, ...normalizedBatch];
+          completed.push(currentDiscipline);
+
+          setParsedItems(runningItems);
+          setSelectedParsedIdx((prev) => {
+            const next = { ...prev };
+            for (let k = 0; k < normalizedBatch.length; k += 1) {
+              next[prevLength + k] = true;
+            }
+            return next;
+          });
+        } catch (discErr) {
+          if (abortController.signal.aborted) throw discErr;
+          failed.push({
+            discipline: currentDiscipline,
+            error:
+              discErr instanceof Error
+                ? discErr.message
+                : "Erro ao extrair disciplina.",
+          });
+        }
+
+        setExtractionProgress({
+          phase: "topics",
+          currentIndex: i + 1,
+          totalDisciplines: disciplines.length,
+          currentDiscipline,
+          extractedCount: runningItems.length,
+          completedDisciplines: [...completed],
+          failedDisciplines: [...failed],
+        });
+      }
+
+      if (failed.length > 0 && runningItems.length === 0) {
+        throw new Error(failed[0].error);
+      } else if (failed.length > 0) {
+        setEditalError(
+          `Algumas disciplinas falharam na extração (${failed
+            .map((f) => f.discipline)
+            .join(", ")}). Os demais ${runningItems.length} subitens foram carregados na prévia.`
+        );
+      }
     } catch (err) {
-      setEditalError(err instanceof Error ? err.message : "Erro ao processar edital.");
+      if (err instanceof DOMException && err.name === "AbortError") {
+        setEditalError(
+          "Extração interrompida pelo usuário. Os subitens já extraídos permanecem na prévia."
+        );
+      } else {
+        setEditalError(err instanceof Error ? err.message : "Erro ao processar edital.");
+      }
     } finally {
       setIsOrganizing(false);
+      setExtractionProgress(null);
+      if (extractionAbortRef.current === abortController) {
+        extractionAbortRef.current = null;
+      }
     }
   };
 
@@ -260,6 +400,7 @@ export const SourceOrganizerView: React.FC<SourceOrganizerViewProps> = ({
         id: `card-edital-${Date.now()}-${idx}`,
         trackId: targetTrackId,
         discipline: item.discipline.trim() || "Matéria Geral",
+        macroTopic: item.macroTopic?.trim() || undefined,
         topic: item.topic,
         normativeRefs: item.normativeRefs,
         incidence,
@@ -586,84 +727,156 @@ export const SourceOrganizerView: React.FC<SourceOrganizerViewProps> = ({
               </div>
             )}
 
-            <button
-              type="submit"
-              disabled={isOrganizing}
-              className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-white bg-[#1E3A5F] rounded-md hover:bg-[#162D4A] disabled:opacity-60 transition-colors"
-            >
-              {isOrganizing ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Estruturando tópicos do edital com Gemini...</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-4 h-4" />
-                  <span>Organizar edital em cartões Kanban</span>
-                </>
+            <div className="flex items-center gap-2">
+              <button
+                type="submit"
+                disabled={isOrganizing}
+                className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-white bg-[#1E3A5F] rounded-md hover:bg-[#162D4A] disabled:opacity-60 transition-colors"
+              >
+                {isOrganizing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>
+                      {extractionProgress?.phase === "topics"
+                        ? `Extraindo ${extractionProgress.currentDiscipline} [${extractionProgress.currentIndex}/${extractionProgress.totalDisciplines}]...`
+                        : "Mapeando disciplinas do edital..."}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4" />
+                    <span>Organizar 100% do edital em cartões Kanban</span>
+                  </>
+                )}
+              </button>
+
+              {isOrganizing && (
+                <button
+                  type="button"
+                  onClick={handleCancelExtraction}
+                  className="px-3 py-2.5 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-md hover:bg-slate-50 whitespace-nowrap"
+                >
+                  Parar
+                </button>
               )}
-            </button>
+            </div>
           </form>
 
           {/* Right: Structured Preview */}
           <div className="lg:col-span-6 bg-white border border-slate-200 rounded-lg p-6 space-y-4">
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h3 className="text-sm font-semibold text-slate-900">
-                  Prévia dos subtópicos estruturados
+                  Prévia hierárquica (3 níveis)
                   {parsedItems.length > 0 && (
                     <span className="ml-2 font-mono text-xs font-medium text-slate-500">
-                      ({parsedItems.length} subtópicos)
+                      ({parsedItems.length} subitens extraídos)
                     </span>
                   )}
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Cada subtópico gerará um card independente no Kanban com a tag da disciplina.
+                  Disciplina (Nível 1) &gt; Capítulo/Tópico (Nível 2) &gt; Subitem específico (Nível 3).
                 </p>
               </div>
               {parsedItems.length > 0 && (
-                <button
-                  type="button"
-                  onClick={handleCommitParsedToKanban}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-[#1E3A5F] rounded-md hover:bg-[#162D4A] whitespace-nowrap shrink-0"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>
-                    Publicar no Kanban (
-                    {Object.values(selectedParsedIdx).filter(Boolean).length})
-                  </span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const allSelected = parsedItems.every(
+                        (_, i) => !!selectedParsedIdx[i]
+                      );
+                      const next: Record<number, boolean> = {};
+                      parsedItems.forEach((_, i) => {
+                        next[i] = !allSelected;
+                      });
+                      setSelectedParsedIdx(next);
+                    }}
+                    className="px-2.5 py-2 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md whitespace-nowrap"
+                  >
+                    {parsedItems.every((_, i) => !!selectedParsedIdx[i])
+                      ? "Desmarcar todos"
+                      : "Selecionar todos"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCommitParsedToKanban}
+                    disabled={isOrganizing}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-[#1E3A5F] rounded-md hover:bg-[#162D4A] disabled:opacity-60 whitespace-nowrap shrink-0"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>
+                      Publicar no Kanban (
+                      {Object.values(selectedParsedIdx).filter(Boolean).length})
+                    </span>
+                  </button>
+                </div>
               )}
             </div>
 
-            {isOrganizing && parsedItems.length === 0 ? (
-              <div className="border border-slate-200 bg-slate-50 rounded-md p-10 text-center space-y-2.5">
-                <Loader2 className="w-6 h-6 text-[#1E3A5F] mx-auto animate-spin" />
-                <div className="text-sm font-medium text-slate-800">
-                  {attachedFile
-                    ? `Extraindo subtópicos de ${attachedFile.fileName}...`
-                    : "Organizando subtópicos do edital..."}
+            {/* Dynamic Two-Stage Progress Panel */}
+            {isOrganizing && extractionProgress && (
+              <div className="border border-slate-200 bg-slate-50 rounded-md p-4 space-y-2.5">
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <div className="flex items-center gap-2 font-semibold text-[#1E3A5F] min-w-0">
+                    <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                    <span className="truncate">
+                      {extractionProgress.phase === "disciplines"
+                        ? "Etapa 1/2: Identificando disciplinas do Anexo de Conteúdo Programático..."
+                        : `Extraindo tópicos de ${extractionProgress.currentDiscipline} [${extractionProgress.currentIndex}/${extractionProgress.totalDisciplines}]...`}
+                    </span>
+                  </div>
+                  <span className="font-mono text-[11px] text-slate-600 tabular-nums shrink-0">
+                    {extractionProgress.extractedCount} cards
+                  </span>
                 </div>
-                <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                  A IA está quebrando cada disciplina em subtópicos individuais do edital para montar os cards do Kanban.
-                </p>
+
+                <div className="h-2 w-full bg-slate-200 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-[#1E3A5F] transition-all duration-300"
+                    style={{
+                      width:
+                        extractionProgress.phase === "disciplines" ||
+                        extractionProgress.totalDisciplines === 0
+                          ? "10%"
+                          : `${Math.max(
+                              12,
+                              Math.round(
+                                (extractionProgress.currentIndex /
+                                  extractionProgress.totalDisciplines) *
+                                  100
+                              )
+                            )}%`,
+                    }}
+                  />
+                </div>
+
+                {extractionProgress.completedDisciplines.length > 0 && (
+                  <p className="text-[11px] text-slate-500">
+                    Concluídas ({extractionProgress.completedDisciplines.length}/
+                    {extractionProgress.totalDisciplines}):{" "}
+                    {extractionProgress.completedDisciplines.join(" · ")}
+                  </p>
+                )}
               </div>
-            ) : parsedItems.length === 0 ? (
+            )}
+
+            {!isOrganizing && parsedItems.length === 0 ? (
               <div className="border border-dashed border-slate-300 rounded-md p-10 text-center space-y-2">
                 <FileText className="w-6 h-6 text-slate-400 mx-auto" />
                 <div className="text-sm font-medium text-slate-700">
                   Nenhum edital processado ainda
                 </div>
                 <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                  Anexe um arquivo (.pdf, .txt, .docx) ou cole o texto ao lado para preencher automaticamente a prévia granular dos subtópicos do Kanban.
+                  Anexe um arquivo (.pdf, .txt, .docx) ou cole o texto ao lado. A Toth mapeia cada disciplina e extrai 100% dos subitens em 3 níveis de profundidade.
                 </p>
               </div>
-            ) : (
+            ) : parsedItems.length > 0 ? (
               <div className="divide-y divide-slate-200 border border-slate-200 rounded-md max-h-[720px] overflow-y-auto">
                 {parsedItems.map((item, idx) => {
                   const checked = !!selectedParsedIdx[idx];
                   return (
-                    <div key={idx} className="p-4 space-y-2">
+                    <div key={idx} className="p-4 space-y-1.5">
                       <div className="flex items-start gap-3">
                         <input
                           type="checkbox"
@@ -677,6 +890,7 @@ export const SourceOrganizerView: React.FC<SourceOrganizerViewProps> = ({
                           className="mt-1 w-4 h-4 accent-[#1E3A5F]"
                         />
                         <div className="min-w-0 flex-1">
+                          {/* Level 1: Discipline Tag */}
                           <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
                             <span
                               className={getDisciplineBadgeClasses(item.discipline)}
@@ -688,13 +902,20 @@ export const SourceOrganizerView: React.FC<SourceOrganizerViewProps> = ({
                               Prioridade {item.incidence} · ~{item.estimatedMinutes} min
                             </span>
                           </div>
-                          <h4 className="mt-1.5 text-sm font-semibold text-slate-900">
+                          {/* Level 2: Chapter / MacroTopic subtle subtitle */}
+                          {item.macroTopic && (
+                            <div className="mt-1.5 text-xs font-medium text-slate-500 leading-snug">
+                              {item.macroTopic}
+                            </div>
+                          )}
+                          {/* Level 3: Specific Subitem main title */}
+                          <h4 className="mt-0.5 text-sm font-semibold text-slate-900 leading-snug">
                             {item.topic}
                           </h4>
                           <div className="mt-0.5 font-mono text-xs text-slate-500">
                             {item.normativeRefs}
                           </div>
-                          <p className="mt-2 text-xs text-slate-600 leading-relaxed line-clamp-3">
+                          <p className="mt-1.5 text-xs text-slate-600 leading-relaxed line-clamp-2">
                             {item.initialSummary}
                           </p>
                         </div>
@@ -703,7 +924,7 @@ export const SourceOrganizerView: React.FC<SourceOrganizerViewProps> = ({
                   );
                 })}
               </div>
-            )}
+            ) : null}
           </div>
         </div>
       ) : (
